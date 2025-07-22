@@ -1,0 +1,1 @@
+UPDATE userprofile SET role = 'admin' WHERE username = 'admin';

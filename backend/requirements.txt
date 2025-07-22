@@ -1,0 +1,14 @@
+# python_version >= "3.12"
+fastapi
+uvicorn
+python-jose[cryptography]
+passlib[bcrypt]
+sqlmodel
+bcrypt==3.2.2
+cryptography
+pydantic-settings
+pytest
+requests
+jwcrypto
+deepdiff
+pymysql
