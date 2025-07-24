@@ -1,8 +1,10 @@
 # main.py
+# Standard library imports
 import os
-# os.environ["DISABLE_SQLALCHEMY_CEXT"] = "1"
 import uuid
+# os.environ["DISABLE_SQLALCHEMY_CEXT"] = "1"
 
+# Third-party imports
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.requests import Request
@@ -10,7 +12,8 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.responses import FileResponse
 
-from api import auth, workspace
+# Local imports
+from api import auth, workspace, data_refresh
 from core.init import run_all
 from core.logger import request_id_ctx_var
 from core.settings import settings
@@ -27,6 +30,7 @@ app = FastAPI()
 # Mount routers first
 app.include_router(auth.router, prefix="/auth", tags=["Authentication APIs"])
 app.include_router(workspace.router, prefix="/workspace", tags=["Workspace APIs"])
+app.include_router(data_refresh.router, prefix="/data", tags=["Data Refresh APIs"])
 
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):

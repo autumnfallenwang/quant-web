@@ -21,8 +21,11 @@ class Settings(BaseSettings):
     REFRESH_TOKEN_EXPIRE_MINUTES: int
     REFRESH_TOKEN_SECRET_KEY: str
 
+    # Data Engine
+    DATA_ENGINE_ROOT: str
+
     class Config:
-        env_file = Path(__file__).resolve().parent.parent.parent / ".env"
+        env_file = Path(__file__).resolve().parent.parent / ".env"
         case_sensitive = True
         extra = "allow"
 

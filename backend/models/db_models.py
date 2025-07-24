@@ -35,13 +35,22 @@ class Job(SQLModel, table=True):
         default_factory=lambda: str(uuid.uuid4()),
         sa_column=Column("job_id", String(36), unique=True, nullable=False)
     )
-    job_type: str  # e.g., 'push', 'pull'
-    status: str = Field(default="pending")  # pending, running, success, failed
-    result: Optional[dict] = Field(default=None, sa_column=Column(JSON))
+    job_type: str  # e.g., 'data_refresh_all', 'data_refresh_stocks', 'custom_analysis'
+    status: str = Field(default="pending")  # pending, running, success, failed, cancelled
+    result: Optional[dict] = Field(default=None, sa_column=Column(JSON))  # Enhanced: stores progress, metadata, errors
+    priority: str = Field(default="normal")  # low, normal, high, urgent
+    estimated_duration: Optional[int] = Field(default=None)  # seconds
+    actual_duration: Optional[int] = Field(default=None)  # seconds
+    retry_count: int = Field(default=0)  # Number of retry attempts
+    max_retries: int = Field(default=3)  # Maximum retry attempts
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    started_at: Optional[datetime] = Field(default=None)
+    completed_at: Optional[datetime] = Field(default=None)
+    scheduled_at: Optional[datetime] = Field(default=None)  # For scheduled jobs
 
     workspace_id: int = Field(foreign_key="workspace.id")
+    created_by: Optional[int] = Field(default=None, foreign_key="userprofile.id")  # Who created the job
 
     workspace: Optional["Workspace"] = Relationship(back_populates="jobs")
 

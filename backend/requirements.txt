@@ -4,11 +4,15 @@ uvicorn
 python-jose[cryptography]
 passlib[bcrypt]
 sqlmodel
+aiosqlite  # Async SQLite support
 bcrypt==3.2.2
 cryptography
 pydantic-settings
 pytest
+pytest-asyncio
 requests
 jwcrypto
 deepdiff
 pymysql
+yfinance
+pandas
