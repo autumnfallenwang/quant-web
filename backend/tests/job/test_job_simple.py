@@ -5,7 +5,7 @@ Simple working tests for the job system
 import pytest
 from datetime import datetime, UTC
 
-from core.job import convert_job_to_response
+from services.job_service import convert_job_to_response
 
 def test_convert_job_to_response():
     """Test job response conversion utility"""
@@ -42,7 +42,7 @@ def test_convert_job_to_response():
 
 def test_job_priorities():
     """Test job priority types"""
-    from core.job import JobPriorityType
+    from services.job_service import JobPriorityType
     
     # These should be valid priorities
     valid_priorities = ["low", "normal", "high", "urgent"]
@@ -52,7 +52,7 @@ def test_job_priorities():
 
 def test_job_statuses():
     """Test job status types"""
-    from core.job import JobStatusType
+    from services.job_service import JobStatusType
     
     # These should be valid statuses
     valid_statuses = ["pending", "running", "success", "failed", "cancelled"]

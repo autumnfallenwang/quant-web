@@ -1,279 +1,291 @@
-# services/workspace_service.py
-from typing import Dict, Any
+# services/workspace_service.py - Modern async workspace service
+from typing import Dict, Any, List
 
-from sqlmodel import Session, select
+from sqlmodel import select
 
+from core.db import get_async_session_context
 from core.logger import get_logger
-from models.db_models import Workspace, WorkspaceMembership, UserProfile
-from models.workspace_models import WorkspaceDetailResponse
+from models.db_models import Workspace, WorkspaceMembership
 
 logger = get_logger(__name__)
 
-def create_workspace(
-    workspace_name: str,
-    session: Session,
-    current_user: UserProfile
-) -> Dict[str, Any]:
+async def create_workspace(
+    user_id: int,
+    workspace_name: str
+) -> Workspace:
     """
-    Create a new workspace and assign the current user as its first admin member.
+    Create a new workspace and assign the user as its first admin member.
     """
-    logger.info(f"Creating workspace '{workspace_name}' for user_id={current_user.id}")
+    logger.info(f"Creating workspace '{workspace_name}' for user_id={user_id}")
 
-    # Check if a workspace with this name already exists (optional)
-    existing = session.exec(
-        select(Workspace).where(Workspace.name == workspace_name)
-    ).first()
-    if existing:
-        raise ValueError(f"Workspace '{workspace_name}' already exists.")
+    async with get_async_session_context() as session:
+        # Check if a workspace with this name already exists
+        existing_result = await session.exec(
+            select(Workspace).where(Workspace.name == workspace_name)
+        )
+        existing = existing_result.first()
+        
+        if existing:
+            raise ValueError(f"Workspace '{workspace_name}' already exists.")
 
-    # Create the new workspace
-    workspace = Workspace(
-        name=workspace_name)
-    session.add(workspace)
-    session.flush()  # get workspace.id
+        # Create the new workspace
+        workspace = Workspace(name=workspace_name)
+        session.add(workspace)
+        await session.flush()  # get workspace.id
 
-    # Create WorkspaceMembership for creator
-    membership = WorkspaceMembership(
-        workspace_id=workspace.id,
-        user_profile_id=current_user.id,
-        role="admin"
-    )
-    session.add(membership)
-    session.commit()
+        # Create WorkspaceMembership for creator
+        membership = WorkspaceMembership(
+            workspace_id=workspace.id,
+            user_profile_id=user_id,
+            role="admin"
+        )
+        session.add(membership)
+        await session.commit()
+        await session.refresh(workspace)
 
-    logger.info(f"Workspace '{workspace_name}' created with id={workspace.id}")
+        logger.info(f"Workspace '{workspace_name}' created with id={workspace.id}")
+        return workspace
 
-    return {
-        "workspace_id": workspace.id,
-        "workspace_name": workspace.name,
-        "membership_role": membership.role
-    }
-
-def get_user_workspaces(
-    session: Session,
-    current_user: UserProfile
-) -> list[WorkspaceDetailResponse]:
+async def get_user_workspaces(user_id: int) -> List[Workspace]:
     """
-    Return all workspaces the current user belongs to,
-    including the role in each.
+    Return all workspaces the user belongs to.
     """
-    memberships = session.exec(
-        select(WorkspaceMembership)
-        .where(WorkspaceMembership.user_profile_id == current_user.id)
-        .join(Workspace)
-    ).all()
+    async with get_async_session_context() as session:
+        result = await session.exec(
+            select(Workspace)
+            .join(WorkspaceMembership)
+            .where(WorkspaceMembership.user_profile_id == user_id)
+        )
+        return result.all()
 
-    results = []
-    for m in memberships:
-        results.append(WorkspaceDetailResponse(
-            workspace_id=m.workspace.id,
-            workspace_name=m.workspace.name,
-            role=m.role,
-            joined_at=str(m.created_at) if m.created_at else None
-        ))
-
-    return results
-
-def get_workspace_details(
-    workspace_id: int,
-    session: Session,
-    current_user: UserProfile
-) -> WorkspaceDetailResponse:
+async def get_workspace_details(
+    user_id: int,
+    workspace_id: int
+) -> Workspace:
     """
     Get details for a specific workspace, verifying the user has access.
     """
-    membership = session.exec(
-        select(WorkspaceMembership)
-        .where(
-            WorkspaceMembership.workspace_id == workspace_id,
-            WorkspaceMembership.user_profile_id == current_user.id
+    async with get_async_session_context() as session:
+        # Check workspace membership
+        membership_result = await session.exec(
+            select(WorkspaceMembership).where(
+                (WorkspaceMembership.workspace_id == workspace_id) &
+                (WorkspaceMembership.user_profile_id == user_id)
+            )
         )
-        .join(Workspace)
-    ).first()
+        membership = membership_result.first()
 
-    if not membership:
-        raise ValueError(f"User does not have access to workspace {workspace_id}")
+        if not membership:
+            raise ValueError(f"User {user_id} does not have access to workspace {workspace_id}")
 
-    workspace = membership.workspace
+        # Get workspace details
+        workspace_result = await session.exec(
+            select(Workspace).where(Workspace.id == workspace_id)
+        )
+        workspace = workspace_result.first()
+        
+        if not workspace:
+            raise ValueError(f"Workspace {workspace_id} not found")
+            
+        return workspace
 
-    return WorkspaceDetailResponse(
-        workspace_id=workspace.id,
-        workspace_name=workspace.name,
-        role=membership.role,
-        joined_at=str(membership.created_at) if membership.created_at else None
-    )
+async def get_workspace_members(
+    user_id: int,
+    workspace_id: int
+) -> List[WorkspaceMembership]:
+    """
+    Get all members of a workspace (user must have access to workspace).
+    """
+    async with get_async_session_context() as session:
+        # Verify user has access to workspace
+        user_membership_result = await session.exec(
+            select(WorkspaceMembership).where(
+                (WorkspaceMembership.workspace_id == workspace_id) &
+                (WorkspaceMembership.user_profile_id == user_id)
+            )
+        )
+        if not user_membership_result.first():
+            raise ValueError(f"User {user_id} does not have access to workspace {workspace_id}")
 
-def invite_user_to_workspace(
+        # Get all members
+        members_result = await session.exec(
+            select(WorkspaceMembership)
+            .where(WorkspaceMembership.workspace_id == workspace_id)
+        )
+        return members_result.all()
+
+async def invite_user_to_workspace(
+    user_id: int,
     workspace_id: int,
-    invited_user_profile: UserProfile,
-    role: str,
-    session: Session,
-    current_user: UserProfile
-) -> Dict[str, Any]:
+    invited_user_id: int,
+    role: str
+) -> WorkspaceMembership:
     """
     Invite another user to the workspace by creating a WorkspaceMembership.
     The current user must be an admin in that workspace.
     """
-    # Verify current user has admin role in this workspace
-    membership = session.exec(
-        select(WorkspaceMembership)
-        .where(
-            WorkspaceMembership.workspace_id == workspace_id,
-            WorkspaceMembership.user_profile_id == current_user.id
+    async with get_async_session_context() as session:
+        # Verify current user has admin role in this workspace
+        admin_membership_result = await session.exec(
+            select(WorkspaceMembership).where(
+                (WorkspaceMembership.workspace_id == workspace_id) &
+                (WorkspaceMembership.user_profile_id == user_id)
+            )
         )
-    ).first()
+        admin_membership = admin_membership_result.first()
 
-    if not membership or membership.role != "admin":
-        raise ValueError("Only admins can invite users to this workspace.")
+        if not admin_membership or admin_membership.role != "admin":
+            raise ValueError("Only admins can invite users to this workspace.")
 
-    # Check if the invited user is already a member
-    existing = session.exec(
-        select(WorkspaceMembership)
-        .where(
-            WorkspaceMembership.workspace_id == workspace_id,
-            WorkspaceMembership.user_profile_id == invited_user_profile.id
+        # Check if the invited user is already a member
+        existing_result = await session.exec(
+            select(WorkspaceMembership).where(
+                (WorkspaceMembership.workspace_id == workspace_id) &
+                (WorkspaceMembership.user_profile_id == invited_user_id)
+            )
         )
-    ).first()
+        if existing_result.first():
+            raise ValueError("User is already a member of this workspace.")
 
-    if existing:
-        raise ValueError("User is already a member of this workspace.")
+        # Create new membership
+        new_membership = WorkspaceMembership(
+            workspace_id=workspace_id,
+            user_profile_id=invited_user_id,
+            role=role
+        )
+        session.add(new_membership)
+        await session.commit()
+        await session.refresh(new_membership)
 
-    # Create new membership
-    new_membership = WorkspaceMembership(
-        workspace_id=workspace_id,
-        user_profile_id=invited_user_profile.id,
-        role=role
-    )
-    session.add(new_membership)
-    session.commit()
+        logger.info(f"User {invited_user_id} invited to workspace {workspace_id} with role {role}")
+        return new_membership
 
-    return {
-        "workspace_id": workspace_id,
-        "invited_user_id": invited_user_profile.id,
-        "role": role
-    }
-
-def update_workspace_member_role(
+async def update_workspace_member_role(
+    user_id: int,
     workspace_id: int,
-    member_user_profile: UserProfile,
-    new_role: str,
-    session: Session,
-    current_user: UserProfile
-) -> Dict[str, Any]:
+    member_user_id: int,
+    new_role: str
+) -> WorkspaceMembership:
     """
     Update the role of a workspace member. Only admins can do this.
     """
-    # Verify current user has admin role in this workspace
-    admin_membership = session.exec(
-        select(WorkspaceMembership)
-        .where(
-            WorkspaceMembership.workspace_id == workspace_id,
-            WorkspaceMembership.user_profile_id == current_user.id
+    async with get_async_session_context() as session:
+        # Verify current user has admin role in this workspace
+        admin_membership_result = await session.exec(
+            select(WorkspaceMembership).where(
+                (WorkspaceMembership.workspace_id == workspace_id) &
+                (WorkspaceMembership.user_profile_id == user_id)
+            )
         )
-    ).first()
+        admin_membership = admin_membership_result.first()
 
-    if not admin_membership or admin_membership.role != "admin":
-        raise ValueError("Only admins can update member roles.")
+        if not admin_membership or admin_membership.role != "admin":
+            raise ValueError("Only admins can update member roles.")
 
-    # Find the membership to update
-    target_membership = session.exec(
-        select(WorkspaceMembership)
-        .where(
-            WorkspaceMembership.workspace_id == workspace_id,
-            WorkspaceMembership.user_profile_id == member_user_profile.id
+        # Find the membership to update
+        target_membership_result = await session.exec(
+            select(WorkspaceMembership).where(
+                (WorkspaceMembership.workspace_id == workspace_id) &
+                (WorkspaceMembership.user_profile_id == member_user_id)
+            )
         )
-    ).first()
+        target_membership = target_membership_result.first()
 
-    if not target_membership:
-        raise ValueError("Target user is not a member of this workspace.")
+        if not target_membership:
+            raise ValueError("Target user is not a member of this workspace.")
 
-    target_membership.role = new_role
-    session.add(target_membership)
-    session.commit()
+        target_membership.role = new_role
+        session.add(target_membership)
+        await session.commit()
+        await session.refresh(target_membership)
 
-    return {
-        "workspace_id": workspace_id,
-        "member_user_id": member_user_profile.id,
-        "new_role": new_role
-    }
+        logger.info(f"Updated user {member_user_id} role to {new_role} in workspace {workspace_id}")
+        return target_membership
 
-def remove_workspace_member(
+async def remove_workspace_member(
+    user_id: int,
     workspace_id: int,
-    member_user_profile: UserProfile,
-    session: Session,
-    current_user: UserProfile
+    member_user_id: int
 ) -> Dict[str, Any]:
     """
     Remove a user from the workspace. Only admins can do this.
     """
-    # Verify current user has admin role in this workspace
-    admin_membership = session.exec(
-        select(WorkspaceMembership)
-        .where(
-            WorkspaceMembership.workspace_id == workspace_id,
-            WorkspaceMembership.user_profile_id == current_user.id
+    async with get_async_session_context() as session:
+        # Verify current user has admin role in this workspace
+        admin_membership_result = await session.exec(
+            select(WorkspaceMembership).where(
+                (WorkspaceMembership.workspace_id == workspace_id) &
+                (WorkspaceMembership.user_profile_id == user_id)
+            )
         )
-    ).first()
+        admin_membership = admin_membership_result.first()
 
-    if not admin_membership or admin_membership.role != "admin":
-        raise ValueError("Only admins can remove members.")
+        if not admin_membership or admin_membership.role != "admin":
+            raise ValueError("Only admins can remove members.")
 
-    # Find the membership to delete
-    target_membership = session.exec(
-        select(WorkspaceMembership)
-        .where(
-            WorkspaceMembership.workspace_id == workspace_id,
-            WorkspaceMembership.user_profile_id == member_user_profile.id
+        # Find the membership to delete
+        target_membership_result = await session.exec(
+            select(WorkspaceMembership).where(
+                (WorkspaceMembership.workspace_id == workspace_id) &
+                (WorkspaceMembership.user_profile_id == member_user_id)
+            )
         )
-    ).first()
+        target_membership = target_membership_result.first()
 
-    if not target_membership:
-        raise ValueError("Target user is not a member of this workspace.")
+        if not target_membership:
+            raise ValueError("Target user is not a member of this workspace.")
 
-    session.delete(target_membership)
-    session.commit()
+        await session.delete(target_membership)
+        await session.commit()
 
-    return {
-        "workspace_id": workspace_id,
-        "removed_user_id": member_user_profile.id
-    }
+        logger.info(f"Removed user {member_user_id} from workspace {workspace_id}")
+        return {
+            "workspace_id": workspace_id,
+            "removed_user_id": member_user_id
+        }
 
-def delete_workspace(
-    workspace_id: int,
-    session: Session,
-    current_user: UserProfile
+async def delete_workspace(
+    user_id: int,
+    workspace_id: int
 ) -> Dict[str, Any]:
     """
     Delete an entire workspace. Only admins can do this.
     """
-    # Verify current user is an admin for this workspace
-    admin_membership = session.exec(
-        select(WorkspaceMembership)
-        .where(
-            WorkspaceMembership.workspace_id == workspace_id,
-            WorkspaceMembership.user_profile_id == current_user.id
+    async with get_async_session_context() as session:
+        # Verify current user is an admin for this workspace
+        admin_membership_result = await session.exec(
+            select(WorkspaceMembership).where(
+                (WorkspaceMembership.workspace_id == workspace_id) &
+                (WorkspaceMembership.user_profile_id == user_id)
+            )
         )
-    ).first()
+        admin_membership = admin_membership_result.first()
 
-    if not admin_membership or admin_membership.role != "admin":
-        raise ValueError("Only admins can delete this workspace.")
+        if not admin_membership or admin_membership.role != "admin":
+            raise ValueError("Only admins can delete this workspace.")
 
-    workspace = session.exec(
-        select(Workspace).where(Workspace.id == workspace_id)
-    ).first()
+        # Get workspace to verify it exists
+        workspace_result = await session.exec(
+            select(Workspace).where(Workspace.id == workspace_id)
+        )
+        workspace = workspace_result.first()
 
-    if not workspace:
-        raise ValueError(f"Workspace {workspace_id} does not exist.")
+        if not workspace:
+            raise ValueError(f"Workspace {workspace_id} does not exist.")
 
-    for m in session.exec(
-        select(WorkspaceMembership).where(WorkspaceMembership.workspace_id == workspace_id)
-    ):
-        session.delete(m)
+        # Delete all memberships first
+        memberships_result = await session.exec(
+            select(WorkspaceMembership).where(WorkspaceMembership.workspace_id == workspace_id)
+        )
+        for membership in memberships_result.all():
+            await session.delete(membership)
 
-    session.delete(workspace)
-    session.commit()
+        # Delete the workspace
+        await session.delete(workspace)
+        await session.commit()
 
-    return {
-        "workspace_id": workspace_id,
-        "deleted": True
-    }
+        logger.info(f"Deleted workspace {workspace_id}")
+        return {
+            "workspace_id": workspace_id,
+            "deleted": True
+        }
