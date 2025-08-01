@@ -1,7 +1,9 @@
-# services/data_refresh_service.py
+# services/data_service.py - Data engine service layer
 """
-Service for refreshing market data for all tracked symbols
+Service layer for market data operations and symbol management.
+Handles data refresh, symbol tracking, and coverage analysis.
 """
+# Standard library imports
 from datetime import date, timedelta
 from pathlib import Path
 from typing import List, Dict, Optional
@@ -9,14 +11,16 @@ import asyncio
 from concurrent.futures import ThreadPoolExecutor
 import logging
 
+# Local imports
+
 from core.data_engine import DataEngine
 
 logger = logging.getLogger(__name__)
 
-class DataRefreshService:
+class DataService:
     """
-    Service to refresh market data for predefined symbol lists
-    Designed for cron jobs and scheduled updates
+    Service for market data operations and symbol management.
+    Provides data refresh capabilities and symbol tracking.
     """
     
     def __init__(self):
@@ -234,15 +238,15 @@ class DataRefreshService:
 # Convenience functions for cron jobs
 async def daily_refresh():
     """Daily data refresh - last 7 days"""
-    service = DataRefreshService()
+    service = DataService()
     return await service.refresh_all_symbols(days_back=7)
 
 async def weekly_refresh(): 
     """Weekly data refresh - last 30 days"""
-    service = DataRefreshService()
+    service = DataService()
     return await service.refresh_all_symbols(days_back=30)
 
 async def monthly_refresh():
     """Monthly data refresh - last 90 days"""
-    service = DataRefreshService()
+    service = DataService()
     return await service.refresh_all_symbols(days_back=90)

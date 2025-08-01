@@ -52,11 +52,28 @@ class StorageManager:
         return self.data_root / data_type / asset_type / interval_dir / filename
     
     def save_data(self, data: pd.DataFrame, file_path: Path):
-        """Save DataFrame to parquet file"""
+        """Save DataFrame to parquet file, merging with existing data"""
         if data.empty:
             return
             
         file_path.parent.mkdir(parents=True, exist_ok=True)
+        
+        # Check if file exists and merge with existing data
+        if file_path.exists():
+            try:
+                existing_data = pd.read_parquet(file_path)
+                print(f"Merging new data ({len(data)} rows) with existing data ({len(existing_data)} rows)")
+                
+                # Combine and remove duplicates (keep the newer data)
+                combined = pd.concat([existing_data, data]).sort_index()
+                combined = combined[~combined.index.duplicated(keep='last')]
+                
+                print(f"Merged result: {len(combined)} rows from {combined.index.min().date()} to {combined.index.max().date()}")
+                data = combined
+            except Exception as e:
+                print(f"Warning: Could not merge with existing data in {file_path}: {e}")
+                print("Proceeding with overwrite...")
+        
         try:
             data.to_parquet(file_path)
         except Exception as e:

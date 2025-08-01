@@ -13,7 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.responses import FileResponse
 
 # Local imports
-from api import auth, workspace, data_refresh, job
+from api import auth, workspace, data, job
 from core.init import run_all
 from core.logger import request_id_ctx_var
 from core.settings import settings
@@ -31,7 +31,7 @@ app = FastAPI()
 app.include_router(auth.router, prefix="/auth", tags=["Authentication APIs"])
 app.include_router(workspace.router, prefix="/workspace", tags=["Workspace APIs"])
 app.include_router(job.router, tags=["Job APIs"])  # No prefix - includes workspace-scoped routes
-app.include_router(data_refresh.router, prefix="/data", tags=["Data Refresh APIs"])
+app.include_router(data.router, tags=["Data Infrastructure APIs"])  # No prefix - infrastructure level
 
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):

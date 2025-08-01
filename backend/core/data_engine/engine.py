@@ -37,17 +37,26 @@ class DataEngine:
         # Register symbol if new
         self.metadata.add_symbol(symbol)
         
-        # Try cache first
+        # Try cache first - but only if the data covers the requested end date adequately
         cached_data = self._get_cached_data(symbol, start, end, interval)
         if cached_data is not None and not cached_data.empty:
-            return cached_data
+            # Check if cached data is fresh enough for the requested end date
+            cached_end = cached_data.index.max().date()
+            # For freshness, require data to be within 1 day of requested end date
+            # This ensures we always check for the most recent data available
+            if cached_end >= end:  # Cached data must reach the requested end date
+                return cached_data
         
-        # Try processed data
+        # Try processed data - but only if it covers the requested end date adequately  
         processed_data = self._get_processed_data(symbol, start, end, interval)
         if processed_data is not None and not processed_data.empty:
-            # Cache the result
-            self._cache_data(symbol, processed_data, start, end, interval)
-            return processed_data
+            # Check if processed data is fresh enough for the requested end date
+            processed_end = processed_data.index.max().date()
+            # For freshness, require data to be within 1 day of requested end date
+            if processed_end >= end:  # Processed data must reach the requested end date
+                # Cache the result
+                self._cache_data(symbol, processed_data, start, end, interval)
+                return processed_data
         
         # Download raw data
         raw_data = self._ensure_raw_data(symbol, start, end, interval)
@@ -125,8 +134,18 @@ class DataEngine:
         raw_data = self.storage.download_raw_data(symbol, start, end, interval)
         
         if not raw_data.empty:
-            # Save raw data
+            # Save raw data (this will merge with existing data)
             self._save_raw_data(symbol, raw_data, interval)
+            
+            # Return the merged data from file, not just the downloaded data
+            start_date = raw_data.index.min().date()
+            end_date = raw_data.index.max().date()
+            file_path = self.storage.get_file_path(symbol, interval, 'raw', start_date, end_date)
+            merged_data = self.storage.load_data(file_path)
+            
+            if merged_data is not None:
+                # Filter to the requested range and return
+                return self._filter_data(merged_data, start, end)
             
         return raw_data
     
@@ -216,10 +235,24 @@ class DataEngine:
             data_end = data_end.date()
         
         # Allow some flexibility for weekends/holidays
-        start_buffer = start - timedelta(days=5)
         end_buffer = end + timedelta(days=5)
         
-        return data_start <= start_buffer and data_end >= end_buffer
+        # For end date, we need good coverage (within 5 days)
+        end_coverage_good = data_end >= end_buffer
+        
+        # For start date, be more lenient - if we have recent data (within 30 days of end),
+        # consider it sufficient even if it doesn't go back to the requested start date.
+        # This handles cases where historical data isn't available from the source.
+        recent_threshold = end - timedelta(days=30)
+        has_recent_data = data_start <= recent_threshold
+        
+        # Accept the coverage if we have good end coverage AND either:
+        # 1. Good start coverage (data starts before or near requested start), OR  
+        # 2. Recent data (data starts within 30 days of requested end)
+        start_buffer = start - timedelta(days=5)
+        good_start_coverage = data_start <= start_buffer
+        
+        return end_coverage_good and (good_start_coverage or has_recent_data)
     
     def get_symbols(self, asset_type: str = None) -> list:
         """Get available symbols"""

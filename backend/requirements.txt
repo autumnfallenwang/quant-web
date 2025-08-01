@@ -16,3 +16,4 @@ deepdiff
 pymysql
 yfinance
 pandas
+pyarrow

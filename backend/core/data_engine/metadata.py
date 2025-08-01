@@ -63,10 +63,18 @@ class MetadataStore:
     def register_data_file(self, symbol: str, interval: str, data_type: str,
                           start_date: date, end_date: date, file_path: str,
                           row_count: int = None, file_size: int = None):
-        """Register a data file in the metadata"""
+        """Register a data file in the metadata, updating existing entries for the same file path"""
         with sqlite3.connect(self.db_path) as conn:
+            # First, delete any existing entries for this exact file path
+            # This handles the case where we're updating merged data
             conn.execute("""
-                INSERT OR REPLACE INTO data_files 
+                DELETE FROM data_files 
+                WHERE file_path = ?
+            """, (file_path,))
+            
+            # Then insert the new/updated entry
+            conn.execute("""
+                INSERT INTO data_files 
                 (symbol, interval, data_type, start_date, end_date, file_path, row_count, file_size)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """, (symbol, interval, data_type, start_date, end_date, file_path, row_count, file_size))
