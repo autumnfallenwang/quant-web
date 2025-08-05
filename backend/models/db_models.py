@@ -2,8 +2,9 @@
 import uuid
 from datetime import datetime, UTC
 from typing import Optional, List
+from decimal import Decimal
 
-from sqlalchemy import Column, JSON, String, Text
+from sqlalchemy import Column, JSON, String, Text, DECIMAL
 from sqlmodel import SQLModel, Field, Relationship, UniqueConstraint
 
 class IdentityUser(SQLModel, table=True):
@@ -62,6 +63,7 @@ class Workspace(SQLModel, table=True):
 
     memberships: List["WorkspaceMembership"] = Relationship(back_populates="workspace")
     jobs: List["Job"] = Relationship(back_populates="workspace")
+    portfolios: List["Portfolio"] = Relationship(back_populates="workspace", cascade_delete=True)
 
 class WorkspaceMembership(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
@@ -74,3 +76,57 @@ class WorkspaceMembership(SQLModel, table=True):
 
     workspace: Optional[Workspace] = Relationship(back_populates="memberships")
     user_profile: Optional["UserProfile"] = Relationship(back_populates="workspace_memberships")
+
+class Portfolio(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    name: str = Field(index=True)
+    description: Optional[str] = Field(default=None, sa_column=Column(Text))
+    initial_cash: Decimal = Field(sa_column=Column(DECIMAL(15, 2)), default=Decimal("0.00"))
+    current_cash: Decimal = Field(sa_column=Column(DECIMAL(15, 2)), default=Decimal("0.00"))
+    is_active: bool = Field(default=True)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+    workspace_id: int = Field(foreign_key="workspace.id")
+    created_by: int = Field(foreign_key="userprofile.id")
+
+    workspace: Optional[Workspace] = Relationship(back_populates="portfolios")
+    created_by_user: Optional["UserProfile"] = Relationship()
+    positions: List["Position"] = Relationship(back_populates="portfolio", cascade_delete=True)
+
+    __table_args__ = (UniqueConstraint("workspace_id", "name"),)
+
+class Position(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    symbol: str = Field(index=True)
+    quantity: Decimal = Field(sa_column=Column(DECIMAL(15, 8)))
+    average_price: Decimal = Field(sa_column=Column(DECIMAL(15, 4)))
+    current_price: Optional[Decimal] = Field(default=None, sa_column=Column(DECIMAL(15, 4)))
+    position_type: str = Field(default="long")  # long, short
+    opened_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+    portfolio_id: int = Field(foreign_key="portfolio.id")
+
+    portfolio: Optional[Portfolio] = Relationship(back_populates="positions")
+    transactions: List["Transaction"] = Relationship(back_populates="position", cascade_delete=True)
+
+class Transaction(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    transaction_type: str  # buy, sell, dividend, split, fee
+    symbol: str = Field(index=True)
+    quantity: Decimal = Field(sa_column=Column(DECIMAL(15, 8)))
+    price: Decimal = Field(sa_column=Column(DECIMAL(15, 4)))
+    total_amount: Decimal = Field(sa_column=Column(DECIMAL(15, 2)))
+    fees: Decimal = Field(sa_column=Column(DECIMAL(10, 2)), default=Decimal("0.00"))
+    notes: Optional[str] = Field(default=None, sa_column=Column(Text))
+    executed_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+    portfolio_id: int = Field(foreign_key="portfolio.id")
+    position_id: Optional[int] = Field(default=None, foreign_key="position.id")
+    created_by: int = Field(foreign_key="userprofile.id")
+
+    portfolio: Optional[Portfolio] = Relationship()
+    position: Optional[Position] = Relationship(back_populates="transactions")
+    created_by_user: Optional["UserProfile"] = Relationship()
