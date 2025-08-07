@@ -18,7 +18,7 @@ from core.security import get_current_user
 from core.logger import get_logger
 from core.plugin import apply_sorting, apply_pagination, get_pagination_params, get_sorting_params
 from services.portfolio_service import (
-    create_portfolio, get_portfolio, get_user_portfolios,
+    create_portfolio, get_portfolio, get_user_portfolios, update_portfolio,
     get_portfolio_positions, get_portfolio_transactions,
     analyze_portfolio_quick, analyze_portfolio_comprehensive,
     simulate_trade, execute_trade, validate_portfolio_state
@@ -76,9 +76,9 @@ async def list_workspace_portfolios(
         
         return PortfolioListResponse(
             portfolios=portfolio_responses,
-            total_count=result["total_count"],
-            page=result["page"],
-            page_size=result["page_size"]
+            total_count=result["pagination"]["total"],
+            page=result["pagination"]["page"],
+            page_size=result["pagination"]["limit"]
         )
         
     except Exception as e:
@@ -187,25 +187,32 @@ async def update_workspace_portfolio(
     """
     try:
         # Verify portfolio exists and belongs to workspace
-        portfolio = await get_portfolio(portfolio_id, current_user.id)
-        if portfolio.workspace_id != workspace_id:
+        existing_portfolio = await get_portfolio(portfolio_id, current_user.id)
+        if existing_portfolio.workspace_id != workspace_id:
             raise HTTPException(status_code=404, detail="Portfolio not found in specified workspace")
         
-        # Update portfolio fields (this would need to be implemented in service layer)
-        # For now, return current portfolio
+        # Update portfolio using service layer
+        updated_portfolio = await update_portfolio(
+            portfolio_id=portfolio_id,
+            user_id=current_user.id,
+            name=request.name,
+            description=request.description
+        )
+        
+        # Get position count for response
         positions = await get_portfolio_positions(portfolio_id, current_user.id)
         
         return PortfolioResponse(
-            id=portfolio.id,
-            name=portfolio.name,
-            description=portfolio.description,
-            created_by=portfolio.created_by,
-            workspace_id=portfolio.workspace_id,
-            initial_cash=portfolio.initial_cash,
-            current_cash=portfolio.current_cash,
-            is_active=portfolio.is_active,
-            created_at=portfolio.created_at,
-            updated_at=portfolio.updated_at,
+            id=updated_portfolio.id,
+            name=updated_portfolio.name,
+            description=updated_portfolio.description,
+            created_by=updated_portfolio.created_by,
+            workspace_id=updated_portfolio.workspace_id,
+            initial_cash=updated_portfolio.initial_cash,
+            current_cash=updated_portfolio.current_cash,
+            is_active=updated_portfolio.is_active,
+            created_at=updated_portfolio.created_at,
+            updated_at=updated_portfolio.updated_at,
             position_count=len(positions)
         )
         
@@ -584,9 +591,9 @@ async def list_all_user_portfolios_legacy(
         
         return PortfolioListResponse(
             portfolios=portfolio_responses,
-            total_count=result["total_count"],
-            page=result["page"],
-            page_size=result["page_size"]
+            total_count=result["pagination"]["total"],
+            page=result["pagination"]["page"],
+            page_size=result["pagination"]["limit"]
         )
         
     except Exception as e:

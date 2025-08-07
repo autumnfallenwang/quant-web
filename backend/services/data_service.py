@@ -11,8 +11,10 @@ import asyncio
 from concurrent.futures import ThreadPoolExecutor
 import logging
 
-# Local imports
+# Third-party imports
+import pandas as pd
 
+# Local imports
 from core.data_engine import DataEngine
 
 logger = logging.getLogger(__name__)
@@ -234,6 +236,187 @@ class DataService:
                 coverage_summary['coverage_stats']['no_coverage'] += 1
         
         return coverage_summary
+    
+    # ===============================
+    # Internal API Methods (for other engines)
+    # ===============================
+    
+    async def get_market_data(
+        self, 
+        symbols: List[str], 
+        start_date: date, 
+        end_date: date, 
+        interval: str = '1d'
+    ) -> Dict[str, Optional[pd.DataFrame]]:
+        """Get market data for multiple symbols (for Strategy/Backtesting engines)"""
+        logger.info(f"Getting market data for {len(symbols)} symbols from {start_date} to {end_date}")
+        
+        market_data = {}
+        
+        # Use ThreadPoolExecutor for parallel data fetching
+        with ThreadPoolExecutor(max_workers=5) as executor:
+            tasks = []
+            for symbol in symbols:
+                task = asyncio.get_event_loop().run_in_executor(
+                    executor,
+                    self._get_symbol_dataframe,
+                    symbol, start_date, end_date, interval
+                )
+                tasks.append((symbol, task))
+            
+            # Wait for all tasks to complete
+            for symbol, task in tasks:
+                try:
+                    df = await task
+                    market_data[symbol] = df  # Can be None if no data
+                except Exception as e:
+                    logger.error(f"Error getting data for {symbol}: {e}")
+                    market_data[symbol] = None
+        
+        successful_count = len([v for v in market_data.values() if v is not None and not v.empty])
+        logger.info(f"Retrieved data for {successful_count}/{len(symbols)} symbols")
+        
+        return market_data
+    
+    async def get_current_prices(self, symbols: List[str]) -> Dict[str, Optional[float]]:
+        """Get current prices for symbols (for Portfolio engine)"""
+        logger.info(f"Getting current prices for {len(symbols)} symbols")
+        
+        # Get data for last 2 days to ensure we have current price
+        end_date = date.today()
+        start_date = end_date - timedelta(days=2)
+        
+        prices = {}
+        
+        with ThreadPoolExecutor(max_workers=10) as executor:
+            tasks = []
+            for symbol in symbols:
+                task = asyncio.get_event_loop().run_in_executor(
+                    executor,
+                    self._get_current_price,
+                    symbol, start_date, end_date
+                )
+                tasks.append((symbol, task))
+            
+            for symbol, task in tasks:
+                try:
+                    price = await task
+                    prices[symbol] = price  # Can be None if no data
+                except Exception as e:
+                    logger.error(f"Error getting current price for {symbol}: {e}")
+                    prices[symbol] = None
+        
+        successful_prices = len([p for p in prices.values() if p is not None])
+        logger.info(f"Retrieved current prices for {successful_prices}/{len(symbols)} symbols")
+        
+        return prices
+    
+    async def get_symbol_data(
+        self, 
+        symbol: str, 
+        start_date: date, 
+        end_date: date, 
+        interval: str = '1d'
+    ) -> Optional[pd.DataFrame]:
+        """Get data for a single symbol (convenience method)"""
+        result = await self.get_market_data([symbol], start_date, end_date, interval)
+        return result.get(symbol)
+    
+    async def ensure_data_available(self, symbols: List[str], days_back: int = 7) -> Dict[str, bool]:
+        """Ensure symbols have recent data, refresh if needed (for engine initialization)"""
+        logger.info(f"Ensuring data availability for {len(symbols)} symbols")
+        
+        availability = {}
+        symbols_to_refresh = []
+        
+        end_date = date.today()
+        start_date = end_date - timedelta(days=days_back)
+        
+        # Check which symbols need refreshing
+        for symbol in symbols:
+            try:
+                df = self.data_engine.get_data(symbol, start_date, end_date, '1d')
+                if not df.empty and len(df) >= min(days_back, 3):  # At least 3 data points or days requested
+                    availability[symbol] = True
+                else:
+                    symbols_to_refresh.append(symbol)
+                    availability[symbol] = False
+            except Exception as e:
+                logger.warning(f"Error checking availability for {symbol}: {e}")
+                symbols_to_refresh.append(symbol)
+                availability[symbol] = False
+        
+        # Refresh symbols that need updating
+        if symbols_to_refresh:
+            logger.info(f"Refreshing data for {len(symbols_to_refresh)} symbols")
+            
+            # Add symbols to tracking if not already tracked
+            for symbol in symbols_to_refresh:
+                self.add_symbol(symbol)
+            
+            # Refresh the symbols
+            refresh_result = await self._refresh_specific_symbols(symbols_to_refresh, days_back)
+            
+            # Update availability based on refresh results
+            for symbol in symbols_to_refresh:
+                success = any(r.get('symbol') == symbol and r.get('success', False) for r in refresh_result)
+                availability[symbol] = success
+        
+        successful_count = len([v for v in availability.values() if v])
+        logger.info(f"Data available for {successful_count}/{len(symbols)} symbols")
+        
+        return availability
+    
+    def _get_symbol_dataframe(self, symbol: str, start: date, end: date, interval: str) -> Optional[pd.DataFrame]:
+        """Get DataFrame for a single symbol (synchronous for executor)"""
+        try:
+            df = self.data_engine.get_data(symbol, start, end, interval)
+            return df if not df.empty else None
+        except Exception as e:
+            logger.debug(f"Error getting data for {symbol}: {e}")
+            return None
+    
+    def _get_current_price(self, symbol: str, start: date, end: date) -> Optional[float]:
+        """Get current price for a single symbol (synchronous for executor)"""
+        try:
+            df = self.data_engine.get_data(symbol, start, end, '1d')
+            if df.empty:
+                return None
+            return float(df['Close'].iloc[-1])
+        except Exception as e:
+            logger.debug(f"Error getting current price for {symbol}: {e}")
+            return None
+    
+    async def _refresh_specific_symbols(self, symbols: List[str], days_back: int) -> List[Dict]:
+        """Refresh specific symbols and return results"""
+        end_date = date.today()
+        start_date = end_date - timedelta(days=days_back)
+        
+        results = []
+        
+        with ThreadPoolExecutor(max_workers=5) as executor:
+            tasks = []
+            for symbol in symbols:
+                task = asyncio.get_event_loop().run_in_executor(
+                    executor,
+                    self._refresh_single_symbol,
+                    symbol, start_date, end_date, '1d'
+                )
+                tasks.append((symbol, task))
+            
+            # Wait for all tasks to complete
+            for symbol, task in tasks:
+                try:
+                    result = await task
+                    results.append(result)
+                except Exception as e:
+                    results.append({
+                        'symbol': symbol,
+                        'success': False,
+                        'error': str(e)
+                    })
+        
+        return results
 
 # Convenience functions for cron jobs
 async def daily_refresh():

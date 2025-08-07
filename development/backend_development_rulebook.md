@@ -130,11 +130,36 @@ async def create_job_api(
     return convert_job_to_response(job)
 ```
 
+### **Internal Engine Integration Pattern**
+```python
+# ✅ CORRECT - Use Service Layer for Internal APIs
+from services.data_service import DataService
+
+class StrategyEngine:
+    def __init__(self, strategy, parameters):
+        self.data_service = DataService()  # Service layer with business logic
+        
+    async def get_market_data(self, symbols):
+        return await self.data_service.refresh_symbols(symbols)
+
+# ❌ WRONG - Don't use Core directly for internal integrations
+from core.data_engine import DataEngine  # Too low-level
+```
+
 ### **Key Principles**
 - **Service layer**: Framework-independent, async-first, takes primitive types
 - **API layer**: Handles HTTP concerns, auth, validation, error responses
+- **Internal engines**: Always integrate via Service Layer, never Core directly
+- **Service layer is the internal API**: All cross-engine communication goes through services
 - **Session management**: Services manage their own database sessions
 - **Permission validation**: Built into service functions, not just API layer
+
+### **Layer Responsibilities**
+| Layer | Purpose | Used By |
+|-------|---------|---------|
+| **API Layer** | External HTTP endpoints | Frontend, external clients |
+| **Service Layer** | Internal business API | Other engines, internal services |
+| **Core Layer** | Low-level infrastructure | Service layer only |
 
 ---
 
@@ -191,8 +216,38 @@ DELETE /jobs/{job_id}          # Delete job
 GET    /jobs/{job_id}/status   # Get job status
 POST   /jobs/{job_id}/cancel   # Cancel job (action)
 POST   /jobs/{job_id}/retry    # Retry job (action)
-GET    /jobs/stats             # Get statistics
 ```
+
+### **Collection Analytics Pattern**
+
+**Problem**: Analytics endpoints that conflict with individual resource routes.
+
+**❌ Incorrect (Route Conflict)**:
+```python
+GET /workspace/{id}/backtests/{backtest_id}  # Individual resource
+GET /workspace/{id}/backtests/summary        # Conflicts with {backtest_id}
+```
+
+**✅ Correct Solution**: Use separate analytics resource type:
+```python
+GET /workspace/{id}/backtests/{backtest_id}  # Individual resource
+GET /workspace/{id}/backtest-analytics       # Collection analytics
+```
+
+**Naming Convention**: `{singular-resource}-analytics`
+
+**Examples**:
+```python
+GET /workspace/1/backtest-analytics   # Backtest collection summary
+GET /workspace/1/portfolio-analytics  # Portfolio collection summary  
+GET /workspace/1/strategy-analytics   # Strategy collection summary
+```
+
+**Rationale**:
+- Analytics are conceptually different from individual resources
+- No routing conflicts with resource IDs
+- Clear semantic separation
+- Extensible for different analytics types
 
 ### **Request/Response Models**
 ```python

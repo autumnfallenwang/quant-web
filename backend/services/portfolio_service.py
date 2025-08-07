@@ -102,6 +102,38 @@ async def get_portfolio(portfolio_id: int, user_id: int) -> Portfolio:
 
         return portfolio
 
+async def update_portfolio(
+    portfolio_id: int,
+    user_id: int,
+    name: Optional[str] = None,
+    description: Optional[str] = None,
+    is_active: Optional[bool] = None
+) -> Portfolio:
+    """
+    Update portfolio details with access validation.
+    """
+    async with get_async_session_context() as session:
+        # First verify access to portfolio
+        portfolio = await get_portfolio(portfolio_id, user_id)
+        
+        # Update fields if provided
+        if name is not None:
+            portfolio.name = name
+        if description is not None:
+            portfolio.description = description
+        if is_active is not None:
+            portfolio.is_active = is_active
+            
+        # Update timestamp
+        portfolio.updated_at = datetime.now(timezone.utc)
+        
+        session.add(portfolio)
+        await session.commit()
+        await session.refresh(portfolio)
+        
+        logger.info(f"Updated portfolio {portfolio_id} for user {user_id}")
+        return portfolio
+
 async def get_user_portfolios(user_id: int, workspace_id: Optional[int] = None) -> List[Portfolio]:
     """
     Get all portfolios for a user, optionally filtered by workspace.
@@ -185,8 +217,21 @@ async def analyze_portfolio_quick(portfolio_id: int, user_id: int) -> Dict[str, 
                     'current_price': pos.current_price
                 })
 
+        # Prepare portfolio data for engine
+        portfolio_data = {
+            'id': portfolio.id,
+            'initial_cash': portfolio.initial_cash,
+            'current_cash': portfolio.current_cash
+        }
+        
+        # Prepare current prices (for now, use the stored current_price)
+        current_prices = {}
+        for pos in position_data:
+            if 'current_price' in pos:
+                current_prices[pos['symbol']] = pos['current_price']
+        
         # Run analysis
-        analysis = engine.analyze_portfolio(cash, position_data)
+        analysis = engine.analyze_portfolio(portfolio_data, position_data, current_prices)
 
         # Convert Decimal values to float for JSON serialization
         def convert_decimals(obj):
@@ -263,8 +308,21 @@ async def _process_comprehensive_analysis(job_id: str, portfolio_id: int, user_i
                     'current_price': pos.current_price
                 })
 
+        # Prepare portfolio data for engine
+        portfolio_data = {
+            'id': portfolio.id,
+            'initial_cash': portfolio.initial_cash,
+            'current_cash': portfolio.current_cash
+        }
+        
+        # Prepare current prices (for now, use the stored current_price)
+        current_prices = {}
+        for pos in position_data:
+            if 'current_price' in pos:
+                current_prices[pos['symbol']] = pos['current_price']
+        
         # Basic analysis
-        analysis = engine.analyze_portfolio(cash, position_data)
+        analysis = engine.analyze_portfolio(portfolio_data, position_data, current_prices)
         await update_job_progress(job_id, 50, "Calculating risk metrics")
 
         # Risk validation
@@ -283,13 +341,15 @@ async def _process_comprehensive_analysis(job_id: str, portfolio_id: int, user_i
                 return [convert_decimals(item) for item in obj]
             elif isinstance(obj, Decimal):
                 return float(obj)
+            elif isinstance(obj, datetime):
+                return obj.isoformat()
             else:
                 return obj
 
         comprehensive_result = {
             'portfolio_analysis': convert_decimals(analysis),
-            'risk_validation': validation,
-            'transaction_analysis': transaction_analysis,
+            'risk_validation': convert_decimals(validation),
+            'transaction_analysis': convert_decimals(transaction_analysis),
             'recommendations': _generate_recommendations(analysis, validation),
             'analysis_timestamp': datetime.now(timezone.utc).isoformat()
         }
@@ -409,9 +469,32 @@ async def simulate_trade(
                 'average_price': pos.average_price
             })
 
+        # Find current position for the symbol
+        current_position = None
+        for pos in position_data:
+            if pos['symbol'] == symbol:
+                current_position = {
+                    'quantity': pos['quantity'],
+                    'average_price': pos['average_price']
+                }
+                break
+        
         # Run simulation
-        simulation = engine.simulate_trade(position_data, cash, symbol, quantity, price, trade_type)
+        simulation = engine.simulate_trade(current_position, quantity, price, trade_type)
 
+        # Add execution validation to simulation result
+        execution_result = {
+            'can_execute': True,  # Basic validation - trade was simulated successfully
+            'error': None,
+            'trade_impact': simulation,
+            'portfolio_before': {
+                'cash': float(cash),
+                'positions': position_data
+            },
+            'portfolio_after': simulation,
+            'warnings': []
+        }
+        
         # Convert Decimal values to float
         def convert_decimals(obj):
             if isinstance(obj, dict):
@@ -423,7 +506,7 @@ async def simulate_trade(
             else:
                 return obj
 
-        return convert_decimals(simulation)
+        return convert_decimals(execution_result)
 
     except Exception as e:
         logger.error(f"Error simulating trade: {e}")

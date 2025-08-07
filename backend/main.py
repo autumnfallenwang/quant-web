@@ -13,7 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.responses import FileResponse
 
 # Local imports
-from api import auth, workspace, data, job
+from api import auth, workspace, data, job, portfolio, strategy, backtesting
 from core.init import run_all
 from core.logger import request_id_ctx_var
 from core.settings import settings
@@ -32,6 +32,9 @@ app.include_router(auth.router, prefix="/auth", tags=["Authentication APIs"])
 app.include_router(workspace.router, prefix="/workspace", tags=["Workspace APIs"])
 app.include_router(job.router, tags=["Job APIs"])  # No prefix - includes workspace-scoped routes
 app.include_router(data.router, tags=["Data Infrastructure APIs"])  # No prefix - infrastructure level
+app.include_router(portfolio.router, tags=["Portfolio APIs"])  # No prefix - workspace-scoped routes
+app.include_router(strategy.router, tags=["Strategy APIs"])  # No prefix - workspace-scoped routes
+app.include_router(backtesting.router, tags=["Backtesting APIs"])  # No prefix - workspace-scoped routes
 
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
